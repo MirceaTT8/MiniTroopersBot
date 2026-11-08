@@ -73,9 +73,18 @@ function hasRecruits {
 }
 
 function raid {
-    while hasRecruits
-    do
-        $curl "'$site/b/raid?chk=$chk'"
+    echo "Starting Raids phase..."
+    # Safely cap at 20 loops to prevent any infinite server spam
+    for i in {1..9}; do
+        # Check the /hq page to see if an active raid link exists.
+        # When 0 recruits, the button becomes a replay link (/b/fview) instead of /b/raid.
+        if $curl "$site/hq" | grep 'href="/b/raid"' > /dev/null; then
+            echo "Raid $i: Recruits available! Executing raid..."
+            $curl "$site/b/raid" > /dev/null
+        else
+            echo "Raids complete (0 recruits available)."
+            break
+        fi
     done
 }
 
@@ -143,7 +152,7 @@ fi
 mission
 
 # <<< CHANGED: Temporarily keeping raid and money report disabled until missions are verified
-# raid &
+raid &
 # wait
 # if [[ "$report" != "never" ]]; then
 #     getMoneyRatio
