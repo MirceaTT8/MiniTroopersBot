@@ -24,17 +24,22 @@ function getMoneyRatio {
 # =========================================================================
 
 function mission {
-    # <<< CHANGED: Iterates through all 3 mission types found on your new homepage
     for type in exterminate infiltrate epic; do
-        # <<< CHANGED: Loops 3 times for each mission type
         for i in {1..3}; do
+            # Fetch the HQ page to check the current mission status
+            local hq_page="$($curl "$site/hq")"
+            
+            # If the active mission link is missing, missions are already fought/depleted
+            if ! echo "$hq_page" | grep 'href="/b/mission' > /dev/null; then
+                echo "Missions: Already fought or depleted. Stopping missions."
+                return # Exits the entire mission function immediately
+            fi
+
             echo "Running mission ($type) - attempt $i/3..."
-            # <<< CHANGED: Updated URL to use ?t=<type>, removed chk= parameter, added > /dev/null
             $curl "$site/b/mission?t=$type" > /dev/null
         done
     done
 }
-
 # =========================================================================
 # BATTLE FUNCTIONS (ALREADY WORKING)
 # =========================================================================
@@ -137,8 +142,6 @@ then
 else
     login "login=$login"
 fi
-
-chk="$(getCheck "$cookie_file")"
 
 # 1. Execute Battles
 if [[ -z "$friend" ]]; then
