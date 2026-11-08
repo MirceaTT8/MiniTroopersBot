@@ -1,0 +1,5 @@
+run_accounts.sh
+*.cookie
+.DS_Store
+Thumbs.db
+*.log
