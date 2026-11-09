@@ -1,165 +1,150 @@
-#!/bin/bash
+#!/bin/bash 
 
-### FUNCTIONS ###
-
-function grepTrooper {
-    $curl "$site/t/$1" \
-        | $egrep --regexp='^[0-9]+$'
+### FUNCTIONS ### 
+function grepTrooper {     
+    $curl "$site/t/$1" | $egrep --regexp='^[0-9]+$' 
 }
 
-function getMoneyRatio {
-	local ratio=($(grepTrooper 0))
-	local money="${ratio[0]}"
-	local upgrade_cost="${ratio[1]}"
+function getMoneyRatio { 
+    local ratio=($(grepTrooper 0)) 
+    local money="${ratio[0]}" 
+    local upgrade_cost="${ratio[1]}"     
+    if [[ "$report" == "always" || ( "$report" == "upgradable" && "$money" -ge "$upgrade_cost" ) ]]; then         
+        echo "$login_original's money for next upgrade : $money/$upgrade_cost"     
+    fi 
+}
 
-    if [[ "$report" == "always" || \
-        ( "$report" == "upgradable" && \
-          "$money" -ge "$upgrade_cost" ) ]]; then
-        echo "$login's money for next upgrade : $money/$upgrade_cost"
+# ========================================================================= 
+# MISSION FUNCTIONS 
+# ========================================================================= 
+function mission {     
+    for type in exterminate infiltrate epic; do         
+        for i in {1..3}; do             
+            echo "Running mission ($type) - attempt $i/3..."             
+            $curl "$site/b/mission?t=$type" > /dev/null         
+        done     
+    done 
+}
+
+# ========================================================================= 
+# BATTLE FUNCTIONS 
+# ========================================================================= 
+function getFightKey {     
+    $curl --cookie-jar "$cookie_file" "$site/b/opp" | $egrep --regexp='opp=[0-9]+' | head --lines=1 
+}
+
+function fightRandom {     
+    for i in {1..6}; do         
+        local key="$(getFightKey)"         
+        if [[ -n "$key" ]]; then             
+            echo "Battle $i/6: Attacking opponent ($key)..."             
+            $curl "$site/b/battle?$key" > /dev/null         
+        else             
+            echo "Battle $i/6: No opponent found on /b/opp (0 battles left or page error)."             
+            break         
+        fi     
+    done 
+}
+
+function fightFriend {     
+    for i in {1..6}; do         
+        echo "Battle $i/6: Attacking friend ($1)..."         
+        $curl --data-urlencode "friend=$1" "$site/b/battle" > /dev/null     
+    done 
+}
+
+# ========================================================================= 
+function hasRecruits {     
+    $curl "'$site/hq'" | grep "$Another" > /dev/null     
+    return $? 
+}
+
+function raid {     
+    echo "Starting Raids phase..."     
+    for i in {1..9}; do         
+        if $curl "$site/hq" | grep 'href="/b/raid"' > /dev/null; then             
+            echo "Raid $i: Recruits available! Executing raid..."             
+            $curl "$site/b/raid" > /dev/null         
+        else             
+            echo "Raids complete (0 recruits available)."
+            break         
+        fi     
+    done 
+}
+
+function authenticate {     
+    # Uses --data-urlencode to safely handle special characters like @, &, =, ! in passwords
+    if [[ -n "$password" ]]; then
+        curl -L --silent --cookie-jar "$cookie_file" \
+            --data-urlencode "login=$login_lower" \
+            --data-urlencode "pass=$password" \
+            "$site/login" > /dev/null
+    else
+        curl -L --silent --cookie-jar "$cookie_file" \
+            --data-urlencode "login=$login_lower" \
+            "$site/login" > /dev/null
     fi
 }
 
-# =========================================================================
-# MISSION FUNCTIONS (MODIFIED FOR NEW SERVER)
-# =========================================================================
-
-function mission {
-    for type in exterminate infiltrate epic; do
-        for i in {1..3}; do
-            # Fetch the HQ page to check the current mission status
-            local hq_page="$($curl "$site/hq")"
-            
-            # If the active mission link is missing, missions are already fought/depleted
-            if ! echo "$hq_page" | grep 'href="/b/mission' > /dev/null; then
-                echo "Missions: Already fought or depleted. Stopping missions."
-                return # Exits the entire mission function immediately
-            fi
-
-            echo "Running mission ($type) - attempt $i/3..."
-            $curl "$site/b/mission?t=$type" > /dev/null
-        done
-    done
-}
-# =========================================================================
-# BATTLE FUNCTIONS (ALREADY WORKING)
-# =========================================================================
-
-function getFightKey {
-    $curl --cookie-jar "$cookie_file" "$site/b/opp" \
-        | $egrep --regexp='opp=[0-9]+' \
-        | head --lines=1
+function cleanup {     
+    rm --force "$cookie_file" 
 }
 
-function fightRandom {
-    for i in {1..6}; do
-        local key="$(getFightKey)"
-        if [[ -n "$key" ]]; then
-            echo "Battle $i/6: Attacking opponent ($key)..."
-            $curl "$site/b/battle?$key" > /dev/null
-        else
-            echo "Battle $i/6: No opponent found on /b/opp (0 battles left or page error)."
-            break
-        fi
-    done
-}
+trap "cleanup" EXIT 
 
-function fightFriend {
-    for i in {1..6}; do
-        echo "Battle $i/6: Attacking friend ($1)..."
-        $curl --data "friend=$1" "$site/b/battle" > /dev/null
-    done
-}
+### VARIABLES ### 
+## Defaults ## 
+prefix="$(dirname "$0")" 
+ext="com" 
+Another="Another" 
+report="upgradable" 
 
-# =========================================================================
+## Reading config files ## 
+[[ -f "$prefix/troopers.cfg" ]] && source "$prefix/troopers.cfg"
+[[ -f "$prefix/$ext.culture" ]] && source "$prefix/$ext.culture"
 
-function hasRecruits {
-    $curl "'$site/hq'" | grep "$Another" > /dev/null
-    return $?
-}
+## Reading CLI ## 
+login_original="$1" 
+password="$2" 
+[[ -n "$3" ]] && friend="$3" 
 
-function raid {
-    echo "Starting Raids phase..."
-    # Safely cap at 20 loops to prevent any infinite server spam
-    for i in {1..9}; do
-        # Check the /hq page to see if an active raid link exists.
-        # When 0 recruits, the button becomes a replay link (/b/fview) instead of /b/raid.
-        if $curl "$site/hq" | grep 'href="/b/raid"' > /dev/null; then
-            echo "Raid $i: Recruits available! Executing raid..."
-            $curl "$site/b/raid" > /dev/null
-        else
-            echo "Raids complete (0 recruits available)."
-            break
-        fi
-    done
-}
+# Force login to lowercase for URLs and authentication
+login_lower=$(echo "$login_original" | tr '[:upper:]' '[:lower:]')
 
-function login {
-    curl -L --silent --cookie-jar "$cookie_file" --data "$1" "$site/login" > /dev/null
-}
+## Script Locals ## 
+site="https://$login_lower.trooperstest.gued.es" 
+cookie_file="$(mktemp -t "$login_lower.XXXXXX" --suffix='.cookie')" 
+curl="curl -L --silent --cookie $cookie_file" 
+egrep="grep --extended-regexp --only-matching" 
 
-function cleanup {
-    rm --force "$cookie_file"
-}
+## Dependency checks ## 
+for command in 'grep' 'curl'; do 
+    if ! command -v "$command" > /dev/null; then 
+        echo "error: $0 needs $command to execute" 
+        exit 2 
+    fi
+done 
 
-trap "cleanup" EXIT
+# 0. Authenticate 
+authenticate
 
-### VARIABLES ###
-
-## Defaults ##
-prefix="$(dirname "$0")"
-ext="com"
-Another="Another"
-report="upgradable"
-
-## Reading config files ##
-source $prefix/troopers.cfg
-source $prefix/$ext.culture
-
-## Reading CLI ##
-login=$1
-password=$2
-[[ -n "$3" ]] && friend="$3"
-
-## Script Locals ##
-site="https://$login.trooperstest.gued.es"
-cookie_file="$(mktemp -t "$login.XXXXXX" --suffix='.cookie')"
-curl="curl -L --silent --cookie $cookie_file"
-egrep="grep --extended-regexp --only-matching"
-
-## Dependency checks ##
-for command in 'grep' 'curl'; do
-	which "$command" > /dev/null
-	if [[ $? -gt 0 ]]; then
-		echo "error: $0 needs $command to execute"
-		exit 2
-	fi
-done
-
-# Login
-if [[ -n $password ]]
-then
-    login "login=$login&pass=$password"
-else
-    login "login=$login"
+# 1. Execute Battles 
+if [[ -z "$friend" ]]; then     
+    fightRandom 
+else     
+    fightFriend "$friend" 
 fi
 
-# 1. Execute Battles
-if [[ -z "$friend" ]]; then
-    fightRandom
-else
-    fightFriend "$friend"
-fi
+# 2. Execute Missions 
+mission 
 
-# 2. Execute Missions
-# <<< CHANGED: Uncommented mission so it runs right after battles
-mission
+# 3. Execute Raids 
+raid 
 
-# <<< CHANGED: Temporarily keeping raid and money report disabled until missions are verified
-raid &
-# wait
-# if [[ "$report" != "never" ]]; then
-#     getMoneyRatio
-# fi
+# 4. Report Money
+if [[ "$report" != "never" ]]; then     
+    getMoneyRatio 
+fi 
 
-echo "Finished running battles and missions!"
+echo "Finished running battles and missions!" 
 exit 0
