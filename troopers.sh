@@ -29,8 +29,82 @@ function mission {
 # ========================================================================= 
 # BATTLE FUNCTIONS 
 # ========================================================================= 
-function getFightKey {     
-    $curl --cookie-jar "$cookie_file" "$site/b/opp" | $egrep --regexp='opp=[0-9]+' | head --lines=1 
+function getFightKey {
+    # 1. Download the opponent page HTML
+    local opp_html=$($curl --cookie-jar "$cookie_file" "$site/b/opp")
+
+    # 2. Parse in the exact HTML order: 
+    #    backchoose -> tcard (soldiers) -> opp= (ID) -> po (power)
+    local best_opp=$(echo "$opp_html" | awk '
+        BEGIN {
+            best_opp = ""
+            min_avg = 999999
+            troops = 0
+            current_opp = ""
+            in_po = 0
+        }
+
+        # Step A: Start of a new enemy card — reset variables
+        /class="backchoose"/ {
+            troops = 0
+            current_opp = ""
+            in_po = 0
+        }
+
+        # Step B: Count every soldier card (works even if multiple are on 1 line)
+        /class="tcard"/ {
+            line = $0
+            while (match(line, /class="tcard"/)) {
+                troops++
+                line = substr(line, RSTART + RLENGTH)
+            }
+        }
+
+        # Step C: Grab the opponent ID (do NOT reset troops here!)
+        /opp=[0-9]+/ {
+            if (match($0, /opp=[0-9]+/)) {
+                current_opp = substr($0, RSTART, RLENGTH)
+            }
+        }
+
+        # Step D: Detect the Power section
+        /<li class="po">/ {
+            in_po = 1
+        }
+
+        # Step E: Read the power value and immediately calculate the average
+        in_po && /^[ \t]*[0-9]+[ \t]*$/ {
+            line = $0
+            gsub(/[^0-9]/, "", line)
+            power = line + 0
+
+            if (current_opp != "" && troops > 0 && power > 0) {
+                avg = power / troops
+                # Debug print to stderr so you can see the math in your terminal!
+                printf "  [Eval] %-12s | Power: %2d | Troops: %d | Avg: %.2f\n", current_opp, power, troops, avg > "/dev/stderr"
+                
+                if (avg < min_avg) {
+                    min_avg = avg
+                    best_opp = current_opp
+                }
+            }
+            in_po = 0
+        }
+
+        END {
+            if (best_opp != "") {
+                printf "  [Selected] %s (Lowest Avg: %.2f)\n", best_opp, min_avg > "/dev/stderr"
+                print best_opp
+            }
+        }
+    ')
+
+    # 3. Return the best opponent or fallback if parsing fails
+    if [[ -n "$best_opp" ]]; then
+        echo "$best_opp"
+    else
+        echo "$opp_html" | $egrep --regexp='opp=[0-9]+' | head --lines=1
+    fi
 }
 
 function fightRandom {     
