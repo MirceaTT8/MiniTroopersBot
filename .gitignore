@@ -1,4 +1,5 @@
 run_accounts.sh
+run_stats.sh
 *.cookie
 .DS_Store
 Thumbs.db
