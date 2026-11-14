@@ -40,12 +40,13 @@ ext="com"
 [[ -f "$prefix/$ext.culture" ]] && source "$prefix/$ext.culture"
 
 if [[ -z "$1" ]]; then
-    echo "Usage: $0 <login> [password]"
+    echo "Usage: $0 <login> [password] [upgrade_log_file]"
     exit 1
 fi
 
 login_original="$1"
 password="${2:-$password}"
+upgrade_log="$3"
 login_lower=$(echo "$login_original" | tr '[:upper:]' '[:lower:]')
 
 site="https://$login_lower.trooperstest.gued.es"
@@ -74,6 +75,7 @@ army_power=""
 total_soldiers=0
 upgradable_count=0
 min_upgrade_cost=999999
+upgradable_names=()
 
 echo "========================================="
 echo "  ARMY UPGRADE STATS FOR: $login_original"
@@ -127,6 +129,7 @@ for id in "${troop_ids[@]}"; do
 
         if [[ "$money" -ge "$t_cost" ]]; then
             upgradable_count=$((upgradable_count + 1))
+            upgradable_names+=("#$((id + 1)) $t_name (${t_cost}g)")
             status="[UPGRADABLE!]"
         else
             needed=$((t_cost - money))
@@ -147,6 +150,12 @@ if [[ "$total_soldiers" -gt 0 ]]; then
         echo "Minimum Needed for Next Upgr : $min_upgrade_cost gold"
         if [[ "$money" -ge "$min_upgrade_cost" ]]; then
             echo "Status                       : READY TO UPGRADE AT LEAST 1 SOLDIER!"
+            # If an upgrade log file was provided, record this account and its upgradable soldiers
+            if [[ -n "$upgrade_log" ]]; then
+                soldiers_list=$(IFS=", "; echo "${upgradable_names[*]}")
+                printf "%-15s | Gold: %-4s | Upgradable (%d/%d): %s\n" \
+                    "$login_original" "$money" "$upgradable_count" "$total_soldiers" "$soldiers_list" >> "$upgrade_log"
+            fi
         else
             echo "Status                       : Need $((min_upgrade_cost - money)) more gold for cheapest upgrade."
         fi
