@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =========================================================================
-# SINGLE ACCOUNT UPGRADE & SOLDIER STATISTICS SCRIPT (trooper_stats.sh)
+# FIRST SOLDIER (ID 0) UPGRADE & STATS SCRIPT (trooper_stats.sh)
 # =========================================================================
 
 function authenticate {
@@ -56,113 +56,67 @@ curl="curl -L --silent -A Mozilla/5.0 --cookie $cookie_file --cookie-jar $cookie
 # 1. Authenticate into the account
 authenticate
 
-# 2. Fetch /hq to discover all soldier IDs (/t/0, /t/1, /t/2, etc.)
-hq_html=$($curl "$site/hq" | tr -d '\r')
+echo "========================================="
+echo "  FIRST SOLDIER (ID 0) STATS: $login_original"
+echo "========================================="
 
-# Extract unique soldier indices linked on the HQ page (sorted numerically)
-mapfile -t troop_ids < <(echo "$hq_html" | grep -Eo 'href="/t/[0-9]+"' | grep -Eo '[0-9]+' | sort -n -u)
+# 2. Fetch ONLY the first soldier page (ID 0) and strip carriage returns (\r)
+id=0
+t_html=$($curl "$site/t/$id" | tr -d '\r')
 
-# Fallback: if /hq didn't list links explicitly, probe sequentially starting from 0
-if [[ ${#troop_ids[@]} -eq 0 ]]; then
-    troop_ids=(0 1 2 3 4 5 6 7 8 9 10 11)
-    probe_mode=1
-else
-    probe_mode=0
+# Extract standalone numbers for Money (nums[0]) and Army Power (nums[1])
+mapfile -t nums < <(echo "$t_html" | sed -n 's/^[[:space:]]*\([0-9]\{1,6\}\)[[:space:]]*$/\1/p')
+
+if [[ ${#nums[@]} -lt 1 ]]; then
+    echo "Could not retrieve Soldier #1 (ID 0) data for $login_original (check login/password)."
+    echo "========================================="
+    exit 1
 fi
 
-money=""
-army_power=""
-total_soldiers=0
-upgradable_count=0
-min_upgrade_cost=999999
-upgradable_names=()
+money="${nums[0]}"
+army_power="${nums[1]:-0}"
 
-echo "========================================="
-echo "  ARMY UPGRADE STATS FOR: $login_original"
-echo "========================================="
+# Parse the exact "Upgrade for <COST>" text from <td class="sheetright">
+t_cost=$(echo "$t_html" | grep -Eoi 'Upgrade for [0-9]+' | grep -Eo '[0-9]+' | head -n 1)
 
-for id in "${troop_ids[@]}"; do
-    # Fetch soldier page and strip Windows carriage returns (\r)
-    t_html=$($curl "$site/t/$id" | tr -d '\r')
+# Fallback if third standalone number is present and "Upgrade for" wasn't matched
+if [[ -z "$t_cost" && -n "${nums[2]:-}" ]]; then
+    t_cost="${nums[2]}"
+fi
 
-    # 1. Extract standalone numbers for Money (nums[0]) and Army Power (nums[1])
-    mapfile -t nums < <(echo "$t_html" | sed -n 's/^[[:space:]]*\([0-9]\{1,6\}\)[[:space:]]*$/\1/p')
+# Extract Soldier Name (from rename input or page title)
+t_name=$(echo "$t_html" | sed -n 's/.*id="name" name="name" type="text" value="\([^"]*\)".*/\1/p' | head -n 1)
+if [[ -z "$t_name" ]]; then
+    t_name=$(echo "$t_html" | sed -n "s/.*<title>MiniTroopers - \(.*\)&#39;s stats sheet<\/title>.*/\1/p" | head -n 1)
+fi
+[[ -z "$t_name" ]] && t_name="Soldier #1"
 
-    if [[ ${#nums[@]} -lt 1 ]]; then
-        [[ "$probe_mode" -eq 1 ]] && break
-        continue
-    fi
-
-    t_money="${nums[0]}"
-    t_power="${nums[1]:-0}"
-
-    # 2. Parse the exact "Upgrade for <COST>" text from <td class="sheetright">
-    t_cost=$(echo "$t_html" | grep -Eoi 'Upgrade for [0-9]+' | grep -Eo '[0-9]+' | head -n 1)
-
-    # Fallback if third standalone number is present and "Upgrade for" wasn't matched
-    if [[ -z "$t_cost" && -n "${nums[2]:-}" ]]; then
-        t_cost="${nums[2]}"
-    fi
-
-    # 3. Extract Soldier Name (from rename input, card alt, or page title)
-    t_name=$(echo "$t_html" | sed -n 's/.*id="name" name="name" type="text" value="\([^"]*\)".*/\1/p' | head -n 1)
-    if [[ -z "$t_name" ]]; then
-        t_name=$(echo "$t_html" | sed -n "s/.*<title>MiniTroopers - \(.*\)&#39;s stats sheet<\/title>.*/\1/p" | head -n 1)
-    fi
-    [[ -z "$t_name" ]] && t_name="Soldier #$((id + 1))"
-
-    # Capture the account gold and power from the first valid soldier page
-    if [[ -z "$money" ]]; then
-        money="$t_money"
-        army_power="$t_power"
-        echo "Current Gold : $money | Army Power : $army_power"
-        echo "-----------------------------------------"
-    fi
-
-    total_soldiers=$((total_soldiers + 1))
-
-    # Check if we got a valid numeric upgrade cost
-    if [[ -n "$t_cost" && "$t_cost" =~ ^[0-9]+$ ]]; then
-        if [[ "$t_cost" -lt "$min_upgrade_cost" ]]; then
-            min_upgrade_cost="$t_cost"
-        fi
-
-        if [[ "$money" -ge "$t_cost" ]]; then
-            upgradable_count=$((upgradable_count + 1))
-            upgradable_names+=("#$((id + 1)) $t_name (${t_cost}g)")
-            status="[UPGRADABLE!]"
-        else
-            needed=$((t_cost - money))
-            status="(Needs $needed more gold)"
-        fi
-
-        printf "  #%-2d %-14s | Next Upgrade: %-4d gold | %s\n" "$((id + 1))" "($t_name)" "$t_cost" "$status"
-    else
-        printf "  #%-2d %-14s | Next Upgrade: [Hidden - Army requires password/owner cookie]\n" "$((id + 1))" "($t_name)"
-    fi
-done
-
+echo "Current Gold : $money | Army Power : $army_power"
 echo "-----------------------------------------"
-if [[ "$total_soldiers" -gt 0 ]]; then
-    echo "Total Soldiers               : $total_soldiers"
-    if [[ "$min_upgrade_cost" -lt 999999 ]]; then
-        echo "Upgradable Soldiers Right Now: $upgradable_count / $total_soldiers (with $money gold)"
-        echo "Minimum Needed for Next Upgr : $min_upgrade_cost gold"
-        if [[ "$money" -ge "$min_upgrade_cost" ]]; then
-            echo "Status                       : READY TO UPGRADE AT LEAST 1 SOLDIER!"
-            # If an upgrade log file was provided, record this account and its upgradable soldiers
-            if [[ -n "$upgrade_log" ]]; then
-                soldiers_list=$(IFS=", "; echo "${upgradable_names[*]}")
-                printf "%-15s | Gold: %-4s | Upgradable (%d/%d): %s\n" \
-                    "$login_original" "$money" "$upgradable_count" "$total_soldiers" "$soldiers_list" >> "$upgrade_log"
-            fi
-        else
-            echo "Status                       : Need $((min_upgrade_cost - money)) more gold for cheapest upgrade."
+
+# Check if we got a valid numeric upgrade cost for Soldier ID 0
+if [[ -n "$t_cost" && "$t_cost" =~ ^[0-9]+$ ]]; then
+    if [[ "$money" -ge "$t_cost" ]]; then
+        status="[UPGRADABLE!]"
+        printf "  #1 (ID 0) %-14s | Next Upgrade: %-4d gold | %s\n" "($t_name)" "$t_cost" "$status"
+        echo "-----------------------------------------"
+        echo "Status : READY TO UPGRADE FIRST SOLDIER!"
+
+        # Log this account if an upgrade log file path was provided
+        if [[ -n "$upgrade_log" ]]; then
+            printf "%-15s | Gold: %-4s | Upgrade Cost: %-4s | Soldier #1 (ID 0): %s\n" \
+                "$login_original" "$money" "$t_cost" "$t_name" >> "$upgrade_log"
         fi
     else
-        echo "Status                       : Could not see 'Upgrade for X' button (check password or cookies.txt)."
+        needed=$((t_cost - money))
+        status="(Needs $needed more gold)"
+        printf "  #1 (ID 0) %-14s | Next Upgrade: %-4d gold | %s\n" "($t_name)" "$t_cost" "$status"
+        echo "-----------------------------------------"
+        echo "Status : Need $needed more gold to upgrade Soldier #1."
     fi
 else
-    echo "Could not retrieve soldier data for $login_original (check login/password)."
+    printf "  #1 (ID 0) %-14s | Next Upgrade: [Hidden - Army requires password/owner cookie]\n" "($t_name)"
+    echo "-----------------------------------------"
+    echo "Status : Could not see 'Upgrade for X' button (check password or cookies.txt)."
 fi
 echo "========================================="
