@@ -27,7 +27,7 @@ function getMoneyRatio {
 # MISSION FUNCTIONS
 # =========================================================================
 
-# Checks if $login_lower exists in the recruits=("user:count" ...) array from secret.cfg.
+# Checks if $login_lower exists in the recruits=("user:count" ...) array from the secret.cfg file.
 # Prints the count if found, or prints nothing if the account is not in the array.
 function getConfiguredRecruits {
     local entry acc_name rec_count
