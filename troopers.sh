@@ -2,6 +2,14 @@
 
 ### FUNCTIONS ###
 
+prefix="$(dirname "$0")"
+if [[ -f "$prefix/secret.cfg" ]]; then
+    source "$prefix/secret.cfg"
+else
+    echo "Error: secret.cfg not found in $prefix"
+    exit 1
+fi
+
 function grepTrooper {
     $curl "$site/t/$1" | $egrep --regexp='^[0-9]+$'
 }
@@ -18,11 +26,39 @@ function getMoneyRatio {
 # =========================================================================
 # MISSION FUNCTIONS
 # =========================================================================
+
+# Checks if $login_lower exists in the recruits=("user:count" ...) array from secret.cfg.
+# Prints the count if found, or prints nothing if the account is not in the array.
+function getConfiguredRecruits {
+    local entry acc_name rec_count
+    for entry in "${recruits[@]}"; do
+        acc_name=$(echo "${entry%%:*}" | tr '[:upper:]' '[:lower:]')
+        rec_count="${entry#*:}"
+        if [[ "$acc_name" == "$login_lower" ]]; then
+            echo "$rec_count"
+            return 0
+        fi
+    done
+    return 1
+}
+
 function mission {
     echo "========================================="
     echo "Starting Missions phase..."
 
+    local cfg_recruits
+    cfg_recruits="$(getConfiguredRecruits)"
+
     for type in exterminate infiltrate epic; do
+        # If this is the 'epic' mission and the account was found in the recruits array:
+        # Check if the number of recruits is lower than 5. If so, do not trigger epic.
+        if [[ "$type" == "epic" && -n "$cfg_recruits" ]]; then
+            if [[ "$cfg_recruits" =~ ^[0-9]+$ && "$cfg_recruits" -lt 5 ]]; then
+                echo "  Skipping Mission (epic) - account '$login_original' is in recruits array with $cfg_recruits (< 5)."
+                continue
+            fi
+        fi
+
         # Map mission type to its specific tooltip ID on /hq
         local tip_id=""
         case "$type" in
@@ -287,6 +323,7 @@ report="upgradable"
 
 ## Reading config files ##
 [[ -f "$prefix/troopers.cfg" ]] && source "$prefix/troopers.cfg"
+[[ -f "$prefix/secret.cfg" ]] && source "$prefix/secret.cfg"
 [[ -f "$prefix/$ext.culture" ]] && source "$prefix/$ext.culture"
 
 ## Reading CLI ##
